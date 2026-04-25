@@ -1,7 +1,9 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/point.hpp>
 #include <std_msgs/msg/float32.hpp>
+#include <std_msgs/msg/float64.hpp>
 
 #include <mutex>
 #include <algorithm>
@@ -14,23 +16,15 @@ public:
     {
         RCLCPP_INFO(this->get_logger(), "Teleop Mapper Node Started");
 
-        hand_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/hand_tracking/hand_pose", 10,
-            std::bind(&TeleopMapperNode::handCallback, this, std::placeholders::_1));
+        hand_sub_ = this->create_subscription<geometry_msgs::msg::Point>("/hand_tracking/position", 10, std::bind(&TeleopMapperNode::handCallback, this, std::placeholders::_1));
 
-        pinch_sub_ = this->create_subscription<std_msgs::msg::Float32>(
-            "/hand_tracking/pinch_distance", 10,
-            std::bind(&TeleopMapperNode::pinchCallback, this, std::placeholders::_1));
+        pinch_sub_ = this->create_subscription<std_msgs::msg::Float64>("/hand_tracking/pinch", 10,std::bind(&TeleopMapperNode::pinchCallback, this, std::placeholders::_1));
 
-        pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>(
-            "/target_pose", 10);
+        pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/target_pose", 10);
 
-        gripper_pub_ = this->create_publisher<std_msgs::msg::Float32>(
-            "/gripper_command", 10);
+        gripper_pub_ = this->create_publisher<std_msgs::msg::Float32>("/gripper_command", 10);
 
-        timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(50), // 20 Hz control
-            std::bind(&TeleopMapperNode::updateLoop, this));
+        timer_ = this->create_wall_timer(std::chrono::milliseconds(50), std::bind(&TeleopMapperNode::updateLoop, this));
 
         filtered_x_ = 0.0;
         filtered_y_ = 0.0;
@@ -41,8 +35,8 @@ public:
 
 private:
 
-    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr hand_sub_;
-    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr pinch_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr hand_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr pinch_sub_;
 
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr gripper_pub_;
@@ -61,19 +55,19 @@ private:
     double filtered_y_;
     double filtered_z_;
 
-    void handCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+    void handCallback(const geometry_msgs::msg::Point::SharedPtr msg)
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        raw_x_ = msg->pose.position.x;
-        raw_y_ = msg->pose.position.y;
-        raw_z_ = msg->pose.position.z;
+        raw_x_ = msg->x;
+        raw_y_ = msg->y;
+        raw_z_ = msg->z;
     }
 
-    void pinchCallback(const std_msgs::msg::Float32::SharedPtr msg)
+    void pinchCallback(const std_msgs::msg::Float64::SharedPtr msg)
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        pinch_ = msg->data;
+        pinch_ = static_cast<float>(msg->data);
     }
 
     double mapRange(double v, double in_min, double in_max,

@@ -7,7 +7,8 @@
 
 #include <mutex>
 
-class MoveItTeleopController : public rclcpp::Node
+class MoveItTeleopController :
+    public rclcpp::Node
 {
 public:
     MoveItTeleopController()
@@ -15,8 +16,24 @@ public:
     {
         RCLCPP_INFO(this->get_logger(), "Initializing MoveIt Teleop Controller...");
 
-        // MoveIt setup (Arm group)
-        move_group_ = std::make_shared<moveit::planning_interface::MoveGroupInterface>(rclcpp::Node::SharedPtr(this, [](auto*){}),"arm");
+        pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+            "/target_pose",
+            10,
+            std::bind(&MoveItTeleopController::poseCallback, this, std::placeholders::_1));
+
+        timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(100),
+            std::bind(&MoveItTeleopController::controlLoop, this));
+
+        RCLCPP_INFO(this->get_logger(), "MoveIt Teleop Controller Ready.");
+    }
+
+    void initMoveGroup()
+    {
+        move_group_ = std::make_shared<moveit::planning_interface::MoveGroupInterface>(
+            shared_from_this(),
+            "arm"
+        );
 
         move_group_->setPlanningTime(1.0);
         move_group_->setNumPlanningAttempts(5);
@@ -25,17 +42,6 @@ public:
 
         move_group_->setPoseReferenceFrame("base_link");
         move_group_->setEndEffectorLink("clawbase");
-
-        pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/target_pose",
-            10,
-            std::bind(&MoveItTeleopController::poseCallback, this, std::placeholders::_1));
-
-        timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(100), // 10 Hz safe teleop
-            std::bind(&MoveItTeleopController::controlLoop, this));
-
-        RCLCPP_INFO(this->get_logger(), "MoveIt Teleop Controller Ready.");
     }
 
 private:
@@ -48,6 +54,8 @@ private:
     geometry_msgs::msg::PoseStamped latest_pose_;
     std::mutex pose_mutex_;
     bool has_new_pose_ = false;
+
+    bool is_executing_ = false;
 
     void poseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
     {
@@ -68,6 +76,12 @@ private:
 
     void controlLoop()
     {
+        if (!move_group_)
+            return;
+
+        if (is_executing_)
+            return;
+
         geometry_msgs::msg::PoseStamped target;
 
         {
@@ -85,6 +99,8 @@ private:
             return;
         }
 
+        is_executing_ = true;
+
         move_group_->setPoseTarget(target);
 
         moveit::planning_interface::MoveGroupInterface::Plan plan;
@@ -96,6 +112,7 @@ private:
         if (!success)
         {
             RCLCPP_WARN(this->get_logger(), "Planning failed");
+            is_executing_ = false;
             return;
         }
 
@@ -104,20 +121,28 @@ private:
         if (exec_result != moveit_msgs::msg::MoveItErrorCodes::SUCCESS)
         {
             RCLCPP_ERROR(this->get_logger(), "Execution failed");
+            is_executing_ = false;
             return;
         }
 
         RCLCPP_INFO(this->get_logger(), "Executed pose successfully");
+
+        is_executing_ = false;
     }
 };
 
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
+
     auto node = std::make_shared<MoveItTeleopController>();
+
+    node->initMoveGroup();
+
     rclcpp::executors::MultiThreadedExecutor exec;
     exec.add_node(node);
     exec.spin();
+
     rclcpp::shutdown();
     return 0;
 }
